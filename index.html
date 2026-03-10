@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kage Ryu - Matter.js Prototype</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="shell">
+    <h1 class="title">KAGE RYU · Ice Shadow Ronin</h1>
+    <div class="hud">
+      <div>
+        <strong>Controles:</strong>
+        A / Flecha Izquierda, D / Flecha Derecha, S / Flecha Abajo, W / Flecha Arriba / Espacio, J, K, Shift, L, U
+      </div>
+      <div>
+        <strong>Objetivo:</strong>
+        evita trampas, derrota centinelas y sobrevive con 3 vidas.
+      </div>
+    </div>
+    <div class="frame">
+      <canvas id="game" width="960" height="540"></canvas>
+      <div id="game-over" class="game-over hidden" aria-hidden="true">
+        <div class="game-over-panel">
+          <p class="game-over-kicker">TACTICAL FAILURE</p>
+          <h2 class="game-over-title">GAME OVER</h2>
+          <p class="game-over-text">Quieres continuar donde quedaste o reiniciar la operación?</p>
+          <div class="game-over-actions">
+            <button id="continue-btn" type="button">Continuar</button>
+            <button id="restart-btn" type="button">Reiniciar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
