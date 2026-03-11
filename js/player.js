@@ -28,14 +28,19 @@
     Composite.add(engine.world, body);
 
     return {
+      engine,
       body,
       width,
       height,
       facing: 1,
+      character: "ronin",
+      characterName: "Kage Ryu",
       onGround: false,
+      wallSide: 0,
       spawn: { x: spawn.x, y: spawn.y },
       lives: 3,
       score: 0,
+      highScore: 0,
       invulnerableTimer: 0,
       attackCooldown: 0,
       heavyCooldown: 0,
@@ -54,6 +59,9 @@
       slashArc: 0,
       slashArcMode: "arc",
       specialWave: null,
+      muzzleFlash: 0,
+      sniperAimFlash: 0,
+      smashImpactDone: false,
       effects: [],
       state: "idle",
       stateFrame: 0,
@@ -69,6 +77,7 @@
     crouch: { frames: 3, speed: 12 },
     run: { frames: 5, speed: 6 },
     jump: { frames: 4, speed: 8 },
+    wallslide: { frames: 3, speed: 8 },
     slash: { frames: 4, speed: 4 },
     heavy: { frames: 5, speed: 5 },
     dash: { frames: 4, speed: 3 },
@@ -85,6 +94,11 @@
 
     const vel = player.body.velocity;
     const moveDir = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+    const wallInfo = detectWallContact(player, worldState, moveDir);
+    player.wallSide = wallInfo.side;
+    if (wallInfo.canSlide && !player.activeAttack) {
+      player.facing = wallInfo.side;
+    }
     const isCrouching = input.down && player.onGround && !player.activeAttack && player.dashTimer <= 0 && player.evadeTimer <= 0;
     const preserveAirMomentum = player.activeAttack && player.activeAttack.airborne;
     const maxSpeed = player.dashTimer > 0 ? 10.5 : 4.7;
@@ -115,6 +129,19 @@
       player.jumpBuffer = 10;
     }
 
+    if (input.jumpPressed && wallInfo.canSlide && !player.onGround && player.actionLock <= 0) {
+      Body.setVelocity(player.body, {
+        x: -wallInfo.side * 8.6,
+        y: -11.2,
+      });
+      player.facing = -wallInfo.side;
+      player.onGround = false;
+      player.coyoteTimer = 0;
+      player.jumpBuffer = 0;
+      player.extraJumps = 1;
+      pushEffect(player, "jump", player.body.position.x, player.body.position.y + 20, player.facing);
+    }
+
     if (player.jumpBuffer > 0 && (player.onGround || player.coyoteTimer > 0) && player.actionLock <= 0 && !isCrouching) {
       Body.setVelocity(player.body, {
         x: player.body.velocity.x,
@@ -134,12 +161,23 @@
       pushEffect(player, "doubleJump", player.body.position.x, player.body.position.y + 14, player.facing);
     }
 
-    if (input.attackPressed && player.attackCooldown <= 0 && player.actionLock <= 0) {
-      startAttack(player, "slash", 16, 18, 70, 52, 1);
+    if (wallInfo.canSlide && player.body.velocity.y > 2.4) {
+      Body.setVelocity(player.body, {
+        x: player.body.velocity.x,
+        y: 2.4,
+      });
     }
 
-    if (input.heavyPressed && player.heavyCooldown <= 0 && player.actionLock <= 0) {
-      startAttack(player, "heavy", 22, 26, 92, 62, 2);
+    if (player.character === "sniper") {
+      handleSniperActions(player, input, worldState, wallInfo);
+    } else {
+      if (input.attackPressed && player.attackCooldown <= 0 && (player.actionLock <= 0 || wallInfo.canSlide)) {
+        startAttack(player, "slash", 16, 18, 70, 52, 1);
+      }
+
+      if (input.heavyPressed && player.heavyCooldown <= 0 && (player.actionLock <= 0 || wallInfo.canSlide)) {
+        throwShuriken(player, worldState);
+      }
     }
 
     if (input.dashPressed && player.dashCooldown <= 0) {
@@ -171,15 +209,129 @@
     }
 
     if (input.specialPressed && player.specialCooldown <= 0 && !player.specialWave) {
-      startSpecialWave(player);
+      if (player.character === "sniper") {
+        fireSniperLock(player, worldState);
+      } else {
+        startSpecialWave(player);
+      }
     }
 
     updateAttack(player, worldState);
     updateSpecialWave(player, worldState);
     updateEffects(player);
     updateSafePoint(player);
-    updateAnimation(player, moveDir, isCrouching);
+    updateAnimation(player, moveDir, isCrouching, wallInfo.canSlide);
     tickTimers(player);
+  }
+
+  function handleSniperActions(player, input, worldState, wallInfo) {
+    if (input.attackPressed && player.attackCooldown <= 0 && (player.actionLock <= 0 || wallInfo.canSlide)) {
+      fireSniperShot(player, worldState, false);
+    }
+
+    if (input.heavyPressed && player.heavyCooldown <= 0 && (player.actionLock <= 0 || wallInfo.canSlide)) {
+      if (!player.onGround) {
+        startSmashAttack(player);
+      } else {
+        fireSniperShot(player, worldState, true);
+      }
+    }
+  }
+
+  function fireSniperShot(player, worldState, charged) {
+    player.attackCooldown = charged ? player.attackCooldown : 14;
+    player.heavyCooldown = charged ? 26 : player.heavyCooldown;
+    player.actionLock = charged ? 10 : 6;
+    player.activeAttack = {
+      type: charged ? "heavy" : "slash",
+      source: "projectile",
+      timer: charged ? 12 : 8,
+      rangeX: charged ? 720 : 540,
+      rangeY: charged ? 90 : 66,
+      damage: charged ? 3 : 1,
+      airborne: false,
+      radius: 0,
+    };
+    player.attackHitIds.clear();
+    player.slashArc = charged ? 8 : 6;
+    player.slashArcMode = "shot";
+    player.muzzleFlash = charged ? 10 : 7;
+    GameAudio.playSword(charged ? "heavy" : "slash");
+    GameWorld.spawnRyanBullet(player.engine, worldState, player, charged);
+    pushEffect(player, charged ? "sniperHeavy" : "sniperShot", player.body.position.x + player.facing * 24, player.body.position.y - 10, player.facing);
+  }
+
+  function throwShuriken(player, worldState) {
+    player.heavyCooldown = 20;
+    player.actionLock = 8;
+    player.activeAttack = {
+      type: "heavy",
+      source: "projectile",
+      timer: 10,
+      rangeX: 0,
+      rangeY: 0,
+      damage: 2,
+      airborne: false,
+      radius: 0,
+    };
+    player.attackHitIds.clear();
+    player.slashArc = 8;
+    player.slashArcMode = "shot";
+    GameAudio.playSword("heavy");
+    GameWorld.spawnRoninShuriken(player.engine, worldState, player);
+    pushEffect(player, "shuriken", player.body.position.x + player.facing * 18, player.body.position.y - 8, player.facing);
+  }
+
+  function startSmashAttack(player) {
+    player.heavyCooldown = 26;
+    player.actionLock = 10;
+    player.smashImpactDone = false;
+    player.activeAttack = {
+      type: "smash",
+      timer: 24,
+      rangeX: 54,
+      rangeY: 64,
+      damage: 4,
+      airborne: true,
+      radius: 58,
+    };
+    player.attackHitIds.clear();
+    player.slashArc = 10;
+    player.slashArcMode = "smash";
+    Body.setVelocity(player.body, {
+      x: player.body.velocity.x * 0.6,
+      y: 14,
+    });
+    pushEffect(player, "smashPrep", player.body.position.x, player.body.position.y, player.facing);
+  }
+
+  function fireSniperLock(player, worldState) {
+    player.specialCooldown = 240;
+    player.sniperAimFlash = 18;
+    GameWorld.spawnRyanSpecial(player.engine, worldState, player);
+    pushEffect(player, "sniperAim", player.body.position.x + player.facing * 28, player.body.position.y - 12, player.facing);
+  }
+
+  function detectWallContact(player, worldState, moveDir) {
+    if (player.onGround || player.body.velocity.y < 0) {
+      return { canSlide: false, side: 0 };
+    }
+
+    for (const wall of worldState.climbWalls) {
+      const dx = wall.body.position.x - player.body.position.x;
+      const dy = Math.abs(wall.body.position.y - player.body.position.y);
+      const horizontalReach = (wall.width / 2) + (player.width / 2) + 6;
+      const verticalReach = (wall.height / 2) + (player.height / 2) - 8;
+      if (Math.abs(dx) <= horizontalReach && dy <= verticalReach) {
+        const side = dx > 0 ? 1 : -1;
+        const pressingTowardWall = moveDir === side || moveDir === 0;
+        if (pressingTowardWall) {
+          return { canSlide: true, side };
+        }
+      }
+    }
+
+    return { canSlide: false, side: 0 };
   }
 
   function tickTimers(player) {
@@ -208,7 +360,7 @@
       rangeY,
       damage,
       airborne,
-      radius: airborne ? (type === "heavy" ? 86 : 70) : 0,
+      radius: airborne ? (type === "heavy" ? 110 : 92) : 0,
     };
     player.attackHitIds.clear();
     player.slashArc = type === "slash" ? 12 : 16;
@@ -219,6 +371,22 @@
 
   function updateAttack(player, worldState) {
     if (!player.activeAttack) {
+      return;
+    }
+
+    if (player.activeAttack.source === "projectile") {
+      player.activeAttack.timer -= 1;
+      if (player.slashArc > 0) {
+        player.slashArc -= 1;
+      }
+      if (player.activeAttack.timer <= 0) {
+        player.activeAttack = null;
+      }
+      return;
+    }
+
+    if (player.activeAttack.type === "smash") {
+      updateSmashAttack(player, worldState);
       return;
     }
 
@@ -256,7 +424,8 @@
         player.attackHitIds.add(enemy.id);
         enemy.alive = false;
         enemy.hitFlash = 10;
-        player.score += player.activeAttack.type === "heavy" ? 150 : 100;
+        player.score += getModeScore(worldState, player.activeAttack.type === "heavy" ? 150 : 100);
+        player.highScore = Math.max(player.highScore, player.score);
         Body.setVelocity(enemy.body, {
           x: player.facing * 8,
           y: -5,
@@ -264,6 +433,48 @@
         pushEffect(player, "hit", enemy.body.position.x, enemy.body.position.y - 10, player.facing);
       }
     });
+  }
+
+  function updateSmashAttack(player, worldState) {
+    player.activeAttack.timer -= 1;
+    player.slashArc = Math.max(0, player.slashArc - 1);
+
+    if (player.body.velocity.y < 12) {
+      Body.setVelocity(player.body, {
+        x: player.body.velocity.x,
+        y: 12,
+      });
+    }
+
+    worldState.enemies.forEach((enemy) => {
+      if (!enemy.alive || player.attackHitIds.has(enemy.id)) {
+        return;
+      }
+
+      const dx = enemy.body.position.x - player.body.position.x;
+      const dy = enemy.body.position.y - (player.body.position.y + 18);
+      if (Math.hypot(dx, dy) <= player.activeAttack.radius) {
+        player.attackHitIds.add(enemy.id);
+        enemy.alive = false;
+        enemy.hitFlash = 14;
+        player.score += getModeScore(worldState, 220);
+        player.highScore = Math.max(player.highScore, player.score);
+        Body.setVelocity(enemy.body, { x: Math.sign(dx || 1) * 7, y: -8 });
+        pushEffect(player, "smoke", enemy.body.position.x, enemy.body.position.y + 20, player.facing);
+      }
+    });
+
+    if (player.onGround && !player.smashImpactDone) {
+      player.smashImpactDone = true;
+      player.actionLock = 8;
+      pushEffect(player, "smoke", player.body.position.x, player.body.position.y + 28, player.facing);
+      player.activeAttack = null;
+      return;
+    }
+
+    if (player.activeAttack.timer <= 0) {
+      player.activeAttack = null;
+    }
   }
 
   function startSpecialWave(player) {
@@ -305,7 +516,8 @@
         wave.hitIds.add(enemy.id);
         enemy.alive = false;
         enemy.hitFlash = 12;
-        player.score += 200;
+        player.score += getModeScore(worldState, 200);
+        player.highScore = Math.max(player.highScore, player.score);
         Body.setVelocity(enemy.body, {
           x: Math.sign(enemy.body.position.x - wave.x || 1) * 10,
           y: -7,
@@ -325,7 +537,15 @@
     }
   }
 
-  function updateAnimation(player, moveDir, isCrouching) {
+  function getModeScore(worldState, baseScore) {
+    if (worldState.mode === "circuit") {
+      return Math.max(10, Math.round(baseScore * 0.2));
+    }
+
+    return baseScore;
+  }
+
+  function updateAnimation(player, moveDir, isCrouching, isWallSliding) {
     let nextState = "idle";
 
     if (player.invulnerableTimer > 0 && player.hitPause > 0) {
@@ -334,10 +554,12 @@
       nextState = "evade";
     } else if (player.dashTimer > 0) {
       nextState = "dash";
-    } else if (player.activeAttack && player.activeAttack.type === "heavy") {
+    } else if (player.activeAttack && (player.activeAttack.type === "heavy" || player.activeAttack.type === "smash")) {
       nextState = "heavy";
     } else if (player.activeAttack) {
       nextState = "slash";
+    } else if (isWallSliding) {
+      nextState = "wallslide";
     } else if (isCrouching) {
       nextState = "crouch";
     } else if (!player.onGround) {
@@ -363,6 +585,8 @@
       effect.timer -= 1;
       return effect.timer > 0;
     });
+    if (player.muzzleFlash > 0) player.muzzleFlash -= 1;
+    if (player.sniperAimFlash > 0) player.sniperAimFlash -= 1;
   }
 
   function pushEffect(player, type, x, y, facing) {
@@ -383,6 +607,11 @@
       }
       player.extraJumps = 1;
       player.onGround = true;
+      if (player.activeAttack && player.activeAttack.type === "smash" && !player.smashImpactDone) {
+        player.smashImpactDone = true;
+        pushEffect(player, "smoke", player.body.position.x, player.body.position.y + 28, player.facing);
+        player.activeAttack = null;
+      }
     } else {
       if (player.onGround) {
         player.coyoteTimer = 6;
@@ -417,6 +646,7 @@
     player.activeAttack = null;
     player.evadeTimer = 0;
     player.specialWave = null;
+    player.smashImpactDone = false;
     player.extraJumps = 1;
     player.effects.length = 0;
   }
@@ -432,6 +662,9 @@
     player.activeAttack = null;
     player.evadeTimer = 0;
     player.specialWave = null;
+    player.smashImpactDone = false;
+    player.muzzleFlash = 0;
+    player.sniperAimFlash = 0;
     player.extraJumps = 1;
     player.effects.length = 0;
   }
@@ -444,8 +677,20 @@
     player.extraJumps = 1;
     player.evadeTimer = 0;
     player.specialWave = null;
+    player.smashImpactDone = false;
     Body.setPosition(player.body, getBodyPositionFromSpawn(player, spawn));
     Body.setVelocity(player.body, { x: 0, y: 0 });
+  }
+
+  function setCharacter(player, characterKey) {
+    player.character = characterKey === "sniper" ? "sniper" : "ronin";
+    player.characterName = player.character === "sniper" ? "Ryan Target" : "Kage Ryu";
+    player.activeAttack = null;
+    player.specialWave = null;
+    player.smashImpactDone = false;
+    player.muzzleFlash = 0;
+    player.sniperAimFlash = 0;
+    player.effects.length = 0;
   }
 
   function renderPlayer(ctx, camera, player) {
@@ -471,7 +716,11 @@
 
     const blink = player.invulnerableTimer > 0 && Math.floor(player.invulnerableTimer / 6) % 2 === 0;
     if (!blink) {
-      drawRoninFrame(ctx, player.state, frame);
+      if (player.character === "sniper") {
+        drawSniperFrame(ctx, player.state, frame, player);
+      } else {
+        drawRoninFrame(ctx, player.state, frame);
+      }
     }
 
     if (player.activeAttack || player.slashArc > 0) {
@@ -573,6 +822,186 @@
     ctx.fillRect(poses.swordX - 6, poses.swordY - 1, 7, 7);
   }
 
+  function drawSniperFrame(ctx, state, frame, player) {
+    const poses = getSniperPose(state, frame);
+
+    ctx.fillStyle = "#090b10";
+    ctx.fillRect(-10, 26, 10, 8);
+    ctx.fillRect(4, 26, 10, 8);
+
+    ctx.fillStyle = "#11161f";
+    ctx.fillRect(-13, -12 + poses.torsoY, 26, 28);
+    ctx.fillStyle = "#1b2430";
+    ctx.fillRect(-11, -10 + poses.torsoY, 22, 24);
+    ctx.fillStyle = "#2b3442";
+    ctx.fillRect(-10, -8 + poses.torsoY, 6, 8);
+    ctx.fillRect(4, -8 + poses.torsoY, 6, 8);
+
+    ctx.fillStyle = "#e3c07f";
+    ctx.fillRect(-8, -28 + poses.headY, 18, 10);
+    ctx.fillStyle = "#0f131a";
+    ctx.fillRect(-11, -34 + poses.headY, 22, 11);
+    ctx.fillRect(-8, -39 + poses.headY, 16, 6);
+    ctx.fillStyle = "#303a47";
+    ctx.fillRect(-10, -22 + poses.headY, 20, 4);
+    ctx.fillStyle = "#8b2a2a";
+    ctx.fillRect(4, -24 + poses.headY, 6, 3);
+
+    const rearShoulder = {
+      x: -7 + (poses.rearShoulderX || 0),
+      y: -3 + (poses.rearShoulderY || 0),
+    };
+    const frontShoulder = {
+      x: 8 + (poses.frontShoulderX || 0),
+      y: -2 + (poses.frontShoulderY || 0),
+    };
+    const rearElbow = {
+      x: rearShoulder.x + 8,
+      y: rearShoulder.y + 4 + poses.armY * 0.6,
+    };
+    const frontElbow = {
+      x: frontShoulder.x + 10,
+      y: frontShoulder.y + 4 + poses.armY2 * 0.5,
+    };
+    const rearHand = {
+      x: (poses.gunX || poses.swordX) - 3,
+      y: (poses.gunY || poses.swordY) + 2,
+    };
+    const frontHand = {
+      x: (poses.gunX || poses.swordX) + Math.max(14, (poses.gunW || poses.swordW) * 0.45),
+      y: (poses.gunY || poses.swordY) + 3,
+    };
+
+    drawSniperArm(ctx, rearShoulder, rearElbow, rearHand, "#171d27");
+    drawSniperArm(ctx, frontShoulder, frontElbow, frontHand, "#171d27");
+
+    ctx.fillStyle = "#090d14";
+    ctx.fillRect(-11 + poses.legFrontX, 14, 9, 18 + poses.legFrontY);
+    ctx.fillRect(3 + poses.legBackX, 14, 9, 18 + poses.legBackY);
+
+    drawSniperWeapon(ctx, poses);
+
+    if (player.muzzleFlash > 0) {
+      drawSniperMuzzleFlash(ctx, poses);
+    }
+  }
+
+  function drawSniperArm(ctx, shoulder, elbow, hand, color) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(shoulder.x, shoulder.y);
+    ctx.lineTo(elbow.x, elbow.y);
+    ctx.lineTo(hand.x, hand.y);
+    ctx.stroke();
+  }
+
+  function drawSniperWeapon(ctx, poses) {
+    const gunX = poses.gunX || poses.swordX;
+    const gunY = poses.gunY || poses.swordY;
+    const gunW = poses.gunW || poses.swordW;
+    const gunAngle = poses.gunAngle || 0;
+    const recoil = poses.gunKick || 0;
+
+    ctx.save();
+    ctx.translate(gunX - recoil, gunY);
+    ctx.rotate(gunAngle);
+
+    ctx.fillStyle = "#4a3617";
+    ctx.fillRect(-12, -3, 12, 10);
+
+    ctx.fillStyle = "#d4a84f";
+    ctx.fillRect(0, -2, gunW, 6);
+    ctx.fillRect(gunW - 4, -3, 12, 8);
+
+    ctx.fillStyle = "#ffe2a0";
+    ctx.fillRect(6, -1, Math.max(10, gunW - 10), 2);
+
+    ctx.fillStyle = "#b78a2f";
+    ctx.fillRect(6, -7, 12, 4);
+    ctx.fillRect(20, -7, 10, 3);
+
+    ctx.fillStyle = "#2d2110";
+    ctx.fillRect(2, 4, 6, 7);
+
+    ctx.restore();
+  }
+
+  function drawSniperMuzzleFlash(ctx, poses) {
+    const gunX = poses.gunX || poses.swordX;
+    const gunY = poses.gunY || poses.swordY;
+    const gunW = poses.gunW || poses.swordW;
+    const gunAngle = poses.gunAngle || 0;
+
+    ctx.save();
+    ctx.translate(gunX + gunW + 6, gunY + 1);
+    ctx.rotate(gunAngle);
+    ctx.fillStyle = "rgba(255, 228, 140, 0.92)";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(14, -4);
+    ctx.lineTo(22, 0);
+    ctx.lineTo(14, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 244, 198, 0.88)";
+    ctx.beginPath();
+    ctx.arc(2, 0, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function getSniperPose(state, frame) {
+    const base = getPose(state, frame);
+    const tables = {
+      idle: [
+        { gunX: 2, gunY: 4, gunW: 30, gunAngle: -0.05, armY: 0, armY2: -3, rearShoulderY: 1, frontShoulderY: -1 },
+        { torsoY: -1, headY: -1, gunX: 2, gunY: 3, gunW: 30, gunAngle: -0.08, armY: -1, armY2: -4, rearShoulderY: 0, frontShoulderY: -2 },
+        { gunX: 3, gunY: 4, gunW: 31, gunAngle: -0.03, armY: 0, armY2: -3, rearShoulderY: 1, frontShoulderY: -1 },
+        { torsoY: 1, headY: 1, gunX: 2, gunY: 5, gunW: 30, gunAngle: -0.02, armY: 1, armY2: -2, rearShoulderY: 2, frontShoulderY: 0 },
+      ],
+      run: [
+        { legFrontX: -4, legFrontY: 3, legBackX: 3, legBackY: -2, armY: 2, armY2: -3, gunX: 1, gunY: 6, gunW: 30, gunAngle: -0.08 },
+        { torsoY: -2, headY: -1, armY: 0, armY2: -5, gunX: 2, gunY: 4, gunW: 31, gunAngle: -0.12 },
+        { legFrontX: 3, legFrontY: -2, legBackX: -3, legBackY: 3, armY: -1, armY2: -3, gunX: 5, gunY: 5, gunW: 31, gunAngle: -0.06 },
+        { torsoY: -1, armY: 1, armY2: -4, gunX: 3, gunY: 6, gunW: 30, gunAngle: -0.08 },
+        { torsoY: 1, headY: 1, armY: 2, armY2: -2, gunX: 2, gunY: 7, gunW: 29, gunAngle: -0.05 },
+      ],
+      jump: [
+        { torsoY: -3, headY: -2, armY: 1, armY2: -6, legFrontX: 3, legFrontY: -5, legBackX: -4, legBackY: -3, gunX: -1, gunY: 0, gunW: 28, gunAngle: -0.26 },
+        { torsoY: -6, headY: -4, armY: -1, armY2: -10, legFrontX: 6, legFrontY: -10, legBackX: -6, legBackY: -9, gunX: -5, gunY: -5, gunW: 26, gunAngle: -0.4 },
+        { torsoY: -5, headY: -3, armY: 2, armY2: -8, legFrontX: -5, legFrontY: -9, legBackX: 5, legBackY: -10, gunX: 7, gunY: -3, gunW: 26, gunAngle: -0.18 },
+        { torsoY: -1, headY: -1, armY: 1, armY2: -3, legFrontX: -2, legFrontY: -2, legBackX: 2, legBackY: -1, gunX: 5, gunY: 3, gunW: 30, gunAngle: -0.12 },
+      ],
+      slash: [
+        { torsoY: 1, headY: 0, armY: 6, armY2: -2, legFrontX: -3, legFrontY: 1, legBackX: 1, legBackY: 0, gunX: -12, gunY: 8, gunW: 34, gunAngle: 0.2, rearShoulderY: 3, frontShoulderY: 2 },
+        { torsoY: -1, headY: -1, armY: 2, armY2: -8, legFrontX: -4, legFrontY: 0, legBackX: 2, legBackY: -1, gunX: -2, gunY: 1, gunW: 38, gunAngle: -0.14, rearShoulderX: -1, frontShoulderY: -2 },
+        { torsoY: -2, headY: -2, armY: 0, armY2: -10, legFrontX: -5, legFrontY: 0, legBackX: 3, legBackY: -1, gunX: 3, gunY: -2, gunW: 40, gunAngle: -0.08, gunKick: 5, rearShoulderX: -1, frontShoulderY: -3 },
+        { torsoY: 1, headY: 0, armY: 4, armY2: -4, legFrontX: -2, legFrontY: 1, legBackX: 1, legBackY: 1, gunX: -1, gunY: 4, gunW: 34, gunAngle: -0.02, rearShoulderY: 1, frontShoulderY: -1 },
+      ],
+      heavy: [
+        { torsoY: 2, headY: 1, armY: 7, armY2: 0, legFrontX: -5, legFrontY: 2, legBackX: 2, legBackY: 0, gunX: -14, gunY: 10, gunW: 36, gunAngle: 0.26, rearShoulderY: 4, frontShoulderY: 2 },
+        { torsoY: 0, headY: -1, armY: 4, armY2: -7, legFrontX: -6, legFrontY: 1, legBackX: 2, legBackY: -1, gunX: -4, gunY: 3, gunW: 42, gunAngle: -0.1, rearShoulderX: -2, frontShoulderY: -2 },
+        { torsoY: -2, headY: -2, armY: 1, armY2: -12, legFrontX: -6, legFrontY: 0, legBackX: 3, legBackY: -2, gunX: 2, gunY: -3, gunW: 46, gunAngle: -0.02, rearShoulderX: -2, frontShoulderY: -4 },
+        { torsoY: -1, headY: -2, armY: -1, armY2: -12, legFrontX: -5, legFrontY: 0, legBackX: 4, legBackY: -1, gunX: 8, gunY: -5, gunW: 48, gunAngle: 0.05, gunKick: 8, rearShoulderX: -2, frontShoulderY: -4 },
+        { torsoY: 2, headY: 1, armY: 5, armY2: -2, legFrontX: -2, legFrontY: 1, legBackX: 1, legBackY: 1, gunX: 0, gunY: 5, gunW: 38, gunAngle: 0.08, rearShoulderY: 2, frontShoulderY: 0 },
+      ],
+      crouch: [
+        { torsoY: 8, headY: 6, armY: 7, armY2: 0, legFrontX: -1, legFrontY: -6, legBackX: 1, legBackY: -6, gunX: 4, gunY: 12, gunW: 26, gunAngle: -0.08 },
+        { torsoY: 9, headY: 7, armY: 7, armY2: 1, legFrontX: -2, legFrontY: -7, legBackX: 2, legBackY: -7, gunX: 4, gunY: 13, gunW: 26, gunAngle: -0.06 },
+        { torsoY: 8, headY: 6, armY: 7, armY2: 0, legFrontX: -1, legFrontY: -6, legBackX: 1, legBackY: -6, gunX: 5, gunY: 12, gunW: 27, gunAngle: -0.08 },
+      ],
+    };
+
+    const table = tables[state];
+    if (!table) {
+      return base;
+    }
+
+    return Object.assign({}, base, table[frame % table.length]);
+  }
+
   function getPose(state, frame) {
     const base = {
       torsoY: 0,
@@ -616,6 +1045,11 @@
         { torsoY: -5, headY: -3, armY: 4, armY2: -2, legFrontX: -5, legFrontY: -9, legBackX: 5, legBackY: -10, scarfTrail: 8, scarfTail: 11, swordX: 16, swordY: 4, swordW: 18 },
         { torsoY: -1, headY: -1, armY: 2, armY2: 1, legFrontX: -2, legFrontY: -2, legBackX: 2, legBackY: -1, scarfTrail: 5, scarfTail: 8, swordX: 10, swordY: 10, swordW: 22 },
       ],
+      wallslide: [
+        { torsoY: 5, headY: 2, scarfY: 2, scarfTail: 6, scarfTrail: 3, armY: 10, armY2: -22, legFrontX: -10, legFrontY: -8, legBackX: 7, legBackY: 8, swordX: 18, swordY: 16, swordW: 16 },
+        { torsoY: 6, headY: 3, scarfY: 3, scarfTail: 7, scarfTrail: 4, armY: 11, armY2: -24, legFrontX: -11, legFrontY: -10, legBackX: 8, legBackY: 10, swordX: 19, swordY: 17, swordW: 15 },
+        { torsoY: 5, headY: 2, scarfY: 2, scarfTail: 7, scarfTrail: 5, armY: 10, armY2: -23, legFrontX: -10, legFrontY: -9, legBackX: 7, legBackY: 9, swordX: 18, swordY: 16, swordW: 16 },
+      ],
       slash: [
         { armY: -2, armY2: -2, swordX: 10, swordY: 6, swordW: 22, scarfTrail: 6, scarfTail: 8 },
         { torsoY: -1, armY: -4, armY2: -3, swordX: 14, swordY: 0, swordW: 24, scarfTrail: 8, scarfTail: 10 },
@@ -623,11 +1057,11 @@
         { armY: 1, armY2: 3, swordX: 13, swordY: 3, swordW: 24, scarfTrail: 7, scarfTail: 8 },
       ],
       heavy: [
-        { torsoY: 1, armY: -1, armY2: 1, swordX: 8, swordY: 10, swordW: 24, scarfTrail: 6, scarfTail: 9 },
-        { torsoY: -1, headY: -1, armY: -5, armY2: -2, swordX: 16, swordY: -6, swordW: 28, scarfTrail: 8, scarfTail: 10 },
-        { torsoY: -2, headY: -2, armY: -6, armY2: -4, swordX: 20, swordY: -13, swordW: 32, scarfTrail: 10, scarfTail: 11 },
-        { torsoY: 0, armY: -2, armY2: 1, swordX: 28, swordY: -4, swordW: 34, scarfTrail: 12, scarfTail: 12 },
-        { torsoY: 2, armY: 2, armY2: 4, swordX: 18, swordY: 6, swordW: 26, scarfTrail: 8, scarfTail: 9 },
+        { torsoY: 2, headY: 1, armY: 3, armY2: 2, swordX: -2, swordY: 10, swordW: 18, scarfTrail: 5, scarfTail: 8 },
+        { torsoY: 0, headY: -1, armY: -4, armY2: -1, swordX: 4, swordY: 2, swordW: 12, scarfTrail: 7, scarfTail: 9 },
+        { torsoY: -1, headY: -2, armY: -7, armY2: -3, swordX: 16, swordY: -8, swordW: 10, scarfTrail: 10, scarfTail: 12 },
+        { torsoY: 1, headY: 0, armY: -1, armY2: 2, swordX: 24, swordY: -2, swordW: 12, scarfTrail: 11, scarfTail: 12 },
+        { torsoY: 2, headY: 1, armY: 2, armY2: 3, swordX: 10, swordY: 6, swordW: 16, scarfTrail: 7, scarfTail: 9 },
       ],
       dash: [
         { torsoY: 4, headY: 2, scarfY: 1, armY: 4, armY2: -2, legFrontX: -7, legFrontY: -2, legBackX: 1, legBackY: 2, scarfTrail: 12, scarfTail: 14, swordX: 10, swordY: 14, swordW: 24 },
@@ -653,12 +1087,17 @@
   }
 
   function drawSlashTrail(ctx, player) {
+    if (player.character === "sniper") {
+      drawSniperTrail(ctx, player);
+      return;
+    }
+
     const power = player.activeAttack && player.activeAttack.type === "heavy" ? 1.2 : 0.9;
     const alpha = Math.max(0, player.slashArc / 16);
     ctx.save();
     ctx.globalAlpha = alpha;
     if (player.slashArcMode === "circle") {
-      const radius = power > 1 ? 38 : 31;
+      const radius = power > 1 ? 50 : 40;
       const spinOffset = (16 - player.slashArc) * 0.28;
       ctx.strokeStyle = power > 1 ? "#c8fbff" : "#7ae8ff";
       ctx.lineWidth = power > 1 ? 7 : 5;
@@ -668,8 +1107,20 @@
       ctx.strokeStyle = power > 1 ? "rgba(80,210,255,0.56)" : "rgba(30,175,255,0.46)";
       ctx.lineWidth = power > 1 ? 5 : 4;
       ctx.beginPath();
-      ctx.arc(0, -2, radius + 10, -spinOffset, -spinOffset + Math.PI * 2);
+      ctx.arc(0, -2, radius + 12, -spinOffset, -spinOffset + Math.PI * 2);
       ctx.stroke();
+    } else if (player.slashArcMode === "shot") {
+      ctx.strokeStyle = "rgba(140, 240, 255, 0.78)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(12, -4, 16, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.rotate((16 - player.slashArc) * 0.45);
+      ctx.fillStyle = "rgba(180, 250, 255, 0.92)";
+      for (let i = 0; i < 4; i += 1) {
+        ctx.rotate(Math.PI / 2);
+        ctx.fillRect(12, -2, 11, 4);
+      }
     } else {
       ctx.strokeStyle = power > 1 ? "#b5f8ff" : "#7ae8ff";
       ctx.lineWidth = power > 1 ? 8 : 6;
@@ -680,6 +1131,49 @@
       ctx.lineWidth = power > 1 ? 14 : 10;
       ctx.beginPath();
       ctx.arc(12, -4, 26 + power * 12, -1.15, 0.55);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawSniperTrail(ctx, player) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.2, player.slashArc / 12);
+
+    if (player.activeAttack && player.activeAttack.type === "smash") {
+      ctx.fillStyle = "rgba(210, 210, 210, 0.34)";
+      ctx.beginPath();
+      ctx.arc(0, 18, 24, 0, Math.PI * 2);
+      ctx.arc(-18, 20, 12, 0, Math.PI * 2);
+      ctx.arc(16, 22, 14, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (player.activeAttack) {
+      const heavyShot = player.activeAttack.type === "heavy";
+      const length = heavyShot ? 150 : 112;
+      ctx.strokeStyle = heavyShot ? "#ffe1a0" : "#f2c86c";
+      ctx.lineWidth = heavyShot ? 6 : 4;
+      ctx.beginPath();
+      ctx.moveTo(14, -8);
+      ctx.lineTo(length, -8);
+      ctx.stroke();
+      ctx.strokeStyle = heavyShot ? "rgba(255, 198, 92, 0.38)" : "rgba(212, 168, 79, 0.32)";
+      ctx.lineWidth = heavyShot ? 12 : 8;
+      ctx.beginPath();
+      ctx.moveTo(14, -8);
+      ctx.lineTo(length + 10, -8);
+      ctx.stroke();
+      ctx.fillStyle = heavyShot ? "#fff2ca" : "#ffe0a1";
+      ctx.beginPath();
+      ctx.arc(length + 4, -8, heavyShot ? 6 : 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (player.sniperAimFlash > 0) {
+      ctx.strokeStyle = "rgba(255, 225, 144, 0.82)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(12, -16);
+      ctx.lineTo(88, -40);
       ctx.stroke();
     }
     ctx.restore();
@@ -737,6 +1231,55 @@
         ctx.beginPath();
         ctx.arc(0, 0, 10 + (1 - t) * 14, 0, Math.PI * 2);
         ctx.stroke();
+      } else if (effect.type === "sniperShot" || effect.type === "sniperHeavy") {
+        const heavyShot = effect.type === "sniperHeavy";
+        ctx.strokeStyle = heavyShot ? "#ffe2a7" : "#f0c56c";
+        ctx.lineWidth = heavyShot ? 6 : 4;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(heavyShot ? 132 : 96, -2);
+        ctx.stroke();
+        ctx.strokeStyle = heavyShot ? "rgba(255, 206, 112, 0.35)" : "rgba(214, 168, 79, 0.3)";
+        ctx.lineWidth = heavyShot ? 14 : 10;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(heavyShot ? 142 : 104, -2);
+        ctx.stroke();
+        ctx.fillStyle = "#fff2c7";
+        ctx.beginPath();
+        ctx.arc(heavyShot ? 138 : 100, -2, heavyShot ? 6 : 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (effect.type === "sniperImpact") {
+        ctx.strokeStyle = "rgba(255, 226, 142, 0.9)";
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 12 + (1 - t) * 18, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (effect.type === "shuriken") {
+        ctx.strokeStyle = "rgba(150, 235, 255, 0.9)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, 10 + (1 - t) * 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.rotate((1 - t) * Math.PI * 2);
+        ctx.fillStyle = "rgba(190, 248, 255, 0.92)";
+        for (let i = 0; i < 4; i += 1) {
+          ctx.rotate(Math.PI / 2);
+          ctx.fillRect(0, -2, 12, 4);
+        }
+      } else if (effect.type === "smoke") {
+        ctx.fillStyle = "rgba(214, 214, 214, 0.3)";
+        ctx.beginPath();
+        ctx.arc(-10, 0, 12 + (1 - t) * 10, 0, Math.PI * 2);
+        ctx.arc(4, -4, 10 + (1 - t) * 8, 0, Math.PI * 2);
+        ctx.arc(16, 2, 8 + (1 - t) * 7, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (effect.type === "sniperAim") {
+        ctx.strokeStyle = "rgba(255, 224, 138, 0.88)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, 20 + (1 - t) * 12, 0, Math.PI * 2);
+        ctx.stroke();
       } else {
         ctx.strokeStyle = effect.type === "heavy" ? "#b9faff" : "#78e6ff";
         ctx.lineWidth = effect.type === "heavy" ? 10 : 6;
@@ -758,5 +1301,6 @@
     respawnPlayer,
     resetPlayer,
     setSpawn,
+    setCharacter,
   };
 }());

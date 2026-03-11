@@ -8,30 +8,109 @@
 </head>
 <body>
   <div class="shell">
-    <h1 class="title">KAGE RYU · Ice Shadow Ronin</h1>
-    <div class="hud">
+    <header class="topbar">
       <div>
-        <strong>Controles:</strong>
-        A / Flecha Izquierda, D / Flecha Derecha, S / Flecha Abajo, W / Flecha Arriba / Espacio, J, K, Shift, L, U
+        <p class="eyebrow">Neo Platform Arena</p>
+        <h1 class="title">KAGE RYU · Ice Shadow Ronin</h1>
       </div>
-      <div>
-        <strong>Objetivo:</strong>
-        evita trampas, derrota centinelas y sobrevive con 3 vidas.
-      </div>
-    </div>
-    <div class="frame">
-      <canvas id="game" width="960" height="540"></canvas>
-      <div id="game-over" class="game-over hidden" aria-hidden="true">
-        <div class="game-over-panel">
-          <p class="game-over-kicker">TACTICAL FAILURE</p>
-          <h2 class="game-over-title">GAME OVER</h2>
-          <p class="game-over-text">Quieres continuar donde quedaste o reiniciar la operación?</p>
-          <div class="game-over-actions">
-            <button id="continue-btn" type="button">Continuar</button>
-            <button id="restart-btn" type="button">Reiniciar</button>
+      <p class="subtitle">Prototipo 2D con fisicas Matter.js, rutas verticales y combate pixel art.</p>
+    </header>
+
+    <div class="layout">
+      <main class="play-area">
+        <div class="frame">
+          <canvas id="game" width="960" height="540"></canvas>
+          <div id="main-menu" class="main-menu" aria-hidden="false">
+            <div class="main-menu-panel">
+              <p class="main-menu-kicker">OPERACION INICIAL</p>
+              <h2 class="main-menu-title">ELIGE DIFICULTAD</h2>
+              <p class="main-menu-text">Selecciona el nivel de amenaza antes de desplegar al ronin.</p>
+              <div class="character-actions">
+                <button class="character-btn" data-character="ronin" type="button">Kage Ryu</button>
+                <button class="character-btn" data-character="sniper" type="button">Ryan Target</button>
+              </div>
+              <div class="difficulty-actions">
+                <button class="difficulty-btn" data-difficulty="easy" type="button">
+                  <span>FACIL</span>
+                  <small>menos enemigos y proyectiles mas lentos</small>
+                </button>
+                <button class="difficulty-btn" data-difficulty="medium" type="button">
+                  <span>MEDIO</span>
+                  <small>equilibrio normal del mapa y combate</small>
+                </button>
+                <button class="difficulty-btn" data-difficulty="hard" type="button">
+                  <span>DIFICIL</span>
+                  <small>mas presion, mas disparos y rutas mas tensas</small>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="game-over" class="game-over hidden" aria-hidden="true">
+            <div class="game-over-panel">
+              <p class="game-over-kicker">TACTICAL FAILURE</p>
+              <h2 class="game-over-title">GAME OVER</h2>
+              <p class="game-over-text">Quieres continuar donde quedaste o reiniciar la operación?</p>
+              <p class="game-over-hint">Toca C para continuar y R para reiniciar</p>
+              <div class="game-over-actions">
+                <button id="continue-btn" type="button">Continuar</button>
+                <button id="restart-btn" type="button">Reiniciar</button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </main>
+
+      <aside class="sidebar" aria-label="Panel de ayuda">
+        <section class="panel">
+          <h2 class="panel-title">Controles</h2>
+          <p><strong>Movimiento:</strong> A / D o flechas</p>
+          <p><strong>Saltar:</strong> W, Flecha Arriba o Espacio</p>
+          <p><strong>Agacharse:</strong> S o Flecha Abajo</p>
+          <p><strong>Atacar:</strong> J y K</p>
+          <p><strong>Dash:</strong> Shift</p>
+          <p><strong>Esquiva:</strong> L</p>
+          <p><strong>Especial:</strong> U</p>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">Personaje</h2>
+          <p><strong>Actual:</strong> <span id="current-character-label">Kage Ryu</span></p>
+          <div class="inline-actions">
+            <button class="character-btn" data-character="ronin" type="button">Kage Ryu</button>
+            <button class="character-btn" data-character="sniper" type="button">Ryan Target</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">Objetivo</h2>
+          <p>Avanza por el mapa, evita trampas, derrota centinelas y llega a la meta con vidas suficientes.</p>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">Tablero</h2>
+          <p><strong>Modo:</strong> estandar o circuito con rampas, puertas y teleportes.</p>
+          <div class="inline-actions">
+            <button id="mode-standard" type="button">Estandar</button>
+            <button id="mode-circuit" type="button">Circuito</button>
+          </div>
+          <p><strong>Skin:</strong> cambia color y acabado del tablero.</p>
+          <div class="inline-actions">
+            <button class="skin-btn" data-skin="neon" type="button">Neon</button>
+            <button class="skin-btn" data-skin="amber" type="button">Amber</button>
+            <button class="skin-btn" data-skin="crimson" type="button">Crimson</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">JSON</h2>
+          <p>Exporta o importa la configuracion actual del tablero.</p>
+          <textarea id="board-json" class="board-json" spellcheck="false" aria-label="Configuracion JSON del tablero"></textarea>
+          <div class="inline-actions">
+            <button id="export-board" type="button">Exportar</button>
+            <button id="import-board" type="button">Importar</button>
+          </div>
+        </section>
+      </aside>
     </div>
   </div>
 

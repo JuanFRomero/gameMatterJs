@@ -30,6 +30,7 @@
     }
 
     const cachedNoise = noiseBuffer();
+    let lastBounceAt = 0;
 
     function playSword(type) {
       unlock();
@@ -133,6 +134,29 @@
       osc.stop(now + 0.9);
     }
 
+    function playBounce(intensity) {
+      unlock();
+      const nowMs = performance.now();
+      if (nowMs - lastBounceAt < 85) {
+        return;
+      }
+      lastBounceAt = nowMs;
+
+      const now = ctx.currentTime;
+      const gain = gainNode(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(Math.min(0.14, 0.06 + (intensity || 0.6) * 0.08), now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+      const osc = ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(420, now);
+      osc.frequency.exponentialRampToValueAtTime(760, now + 0.08);
+      osc.frequency.exponentialRampToValueAtTime(260, now + 0.16);
+      osc.connect(gain);
+      osc.start(now);
+      osc.stop(now + 0.18);
+    }
+
     return {
       unlock,
       playSword,
@@ -140,6 +164,7 @@
       playSkyFall,
       playSkyImpact,
       playSpecialWave,
+      playBounce,
     };
   }
 
@@ -152,6 +177,7 @@
       playSkyFall: noop,
       playSkyImpact: noop,
       playSpecialWave: noop,
+      playBounce: noop,
     };
   }
 
